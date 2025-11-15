@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 from groq import Groq
 import chromadb
+from chromadb.config import Settings
 from chromadb.utils import embedding_functions
 
 # Page configuration
@@ -112,8 +113,14 @@ def initialize_system():
                 })
                 ids.append(f"{video_id}_chunk_{j}")
     
-    # Create ChromaDB collection
-    chroma_client = chromadb.Client()
+    # Create ChromaDB collection with proper settings
+    chroma_settings = Settings(
+        anonymized_telemetry=False,
+        allow_reset=True,
+        is_persistent=False
+    )
+    chroma_client = chromadb.Client(chroma_settings)
+    
     sentence_transformer_ef = embedding_functions.SentenceTransformerEmbeddingFunction(
         model_name="all-MiniLM-L6-v2"
     )
