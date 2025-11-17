@@ -81,7 +81,7 @@ def initialize_system():
     embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
     
     # Load transcripts
-   transcripts_path = Path(".")
+    transcripts_path = Path(".")
     
     # Load metadata
     with open(transcripts_path / "metadata.json", 'r', encoding='utf-8') as f:
@@ -309,4 +309,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
