@@ -1,16 +1,15 @@
 """
-ECHS Q&A Bot - Streamlit Web App (Simple Version)
-Deploy this on Streamlit Cloud for public access
+ECHS Q&A Bot - Streamlit Web App
+Using FAISS for vector search (more reliable than ChromaDB)
 """
 
 import streamlit as st
-import os
 import json
 from pathlib import Path
 from groq import Groq
-import chromadb
-from chromadb.config import Settings
-from chromadb.utils import embedding_functions
+import numpy as np
+import faiss
+from sentence_transformers import SentenceTransformer
 
 # Page configuration
 st.set_page_config(
@@ -20,7 +19,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# Custom CSS for better UI
+# Custom CSS
 st.markdown("""
 <style>
     .main-header {
@@ -78,6 +77,9 @@ def initialize_system():
     groq_api_key = st.secrets["GROQ_API_KEY"]
     client = Groq(api_key=groq_api_key)
     
+    # Load embedding model
+    embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+    
     # Load transcripts
     transcripts_path = Path("transcripts")
     
@@ -88,7 +90,6 @@ def initialize_system():
     # Load all enriched transcripts
     documents = []
     metadatas = []
-    ids = []
     
     for video_meta in metadata:
         video_id = video_meta['video_id']
@@ -111,44 +112,31 @@ def initialize_system():
                     'url': video_meta['url'],
                     'chunk_id': j
                 })
-                ids.append(f"{video_id}_chunk_{j}")
     
-    # Create ChromaDB collection with proper settings
-    chroma_settings = Settings(
-        anonymized_telemetry=False,
-        allow_reset=True,
-        is_persistent=False
-    )
-    chroma_client = chromadb.Client(chroma_settings)
+    # Create embeddings
+    embeddings = embedding_model.encode(documents, show_progress_bar=False)
+    embeddings = np.array(embeddings).astype('float32')
     
-    sentence_transformer_ef = embedding_functions.SentenceTransformerEmbeddingFunction(
-        model_name="all-MiniLM-L6-v2"
-    )
+    # Create FAISS index
+    dimension = embeddings.shape[1]
+    index = faiss.IndexFlatL2(dimension)
+    index.add(embeddings)
     
-    collection = chroma_client.create_collection(
-        name="echs_enriched_transcripts",
-        embedding_function=sentence_transformer_ef
-    )
-    
-    collection.add(
-        documents=documents,
-        metadatas=metadatas,
-        ids=ids
-    )
-    
-    return client, collection, metadata
+    return client, index, documents, metadatas, embedding_model, metadata
 
-def get_answer(question, client, collection):
+def get_answer(question, client, index, documents, metadatas, embedding_model, n_results=5):
     """Get answer for a question"""
     
-    # Search for relevant chunks
-    results = collection.query(
-        query_texts=[question],
-        n_results=5
-    )
+    # Create query embedding
+    query_embedding = embedding_model.encode([question])
+    query_embedding = np.array(query_embedding).astype('float32')
     
-    relevant_docs = results['documents'][0]
-    relevant_metadata = results['metadatas'][0]
+    # Search in FAISS
+    distances, indices = index.search(query_embedding, n_results)
+    
+    # Get relevant documents
+    relevant_docs = [documents[i] for i in indices[0]]
+    relevant_metadata = [metadatas[i] for i in indices[0]]
     
     # Create context
     context = "\n\n---\n\n".join([
@@ -203,10 +191,13 @@ def main():
     if not st.session_state.initialized:
         with st.spinner("🔄 Initializing ECHS Assistant..."):
             try:
-                client, collection, metadata = initialize_system()
-                st.session_state.client = client
-                st.session_state.collection = collection
-                st.session_state.metadata = metadata
+                result = initialize_system()
+                st.session_state.client = result[0]
+                st.session_state.index = result[1]
+                st.session_state.documents = result[2]
+                st.session_state.metadatas = result[3]
+                st.session_state.embedding_model = result[4]
+                st.session_state.metadata = result[5]
                 st.session_state.initialized = True
             except Exception as e:
                 st.error(f"❌ Error initializing system: {str(e)}")
@@ -219,7 +210,7 @@ def main():
         key="question_input"
     )
     
-    # Example questions in expandable section
+    # Example questions
     with st.expander("📝 Click here for example questions"):
         st.markdown("**Common questions you can ask:**")
         examples = [
@@ -258,8 +249,11 @@ def main():
         with st.spinner("🤔 Thinking..."):
             answer, sources = get_answer(
                 question, 
-                st.session_state.client, 
-                st.session_state.collection
+                st.session_state.client,
+                st.session_state.index,
+                st.session_state.documents,
+                st.session_state.metadatas,
+                st.session_state.embedding_model
             )
         
         # Add answer to messages
@@ -277,7 +271,7 @@ def main():
         # Display in reverse order (latest first)
         for i in range(len(st.session_state.messages)-1, -1, -2):
             if i >= 0 and st.session_state.messages[i]["role"] == "assistant":
-                # Get the question (previous message)
+                # Get the question
                 question_msg = st.session_state.messages[i-1] if i > 0 else None
                 answer_msg = st.session_state.messages[i]
                 
