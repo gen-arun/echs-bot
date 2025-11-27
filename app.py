@@ -1,16 +1,20 @@
 """
 ECHS Assistant – Streamlit App
-Uses:
-- Precomputed FAISS index over ECHS video transcripts
+
+- Uses precomputed FAISS index over ECHS video segments
 - SentenceTransformers for query embeddings
 - Groq LLM (llama-3.3-70b-versatile) for answers
 - Google Apps Script for feedback logging
+- Video/time metadata parsed from segment headers:
+  VIDEO ID   : <id>
+  SEGMENT    : <n>
+  TIME       : <start_sec> → <end_sec>
 """
 
 from pathlib import Path
 from datetime import datetime
 import json
-import csv
+import re
 
 import streamlit as st
 import numpy as np
@@ -24,7 +28,7 @@ from groq import Groq
 #  CONFIG
 # ============================================================
 
-# Paths (relative to the repository root where app.py lives)
+# Files (in same folder as app.py)
 INDEX_PATH = Path("echs_faiss.index")
 PARQUET_PATH = Path("echs_segments_master.parquet")
 
@@ -37,6 +41,34 @@ GOOGLE_APPS_SCRIPT_URL = (
     "AKfycbznEPzlIYwDDZWtXAoIJdUS2NdBaSVW11P0K9BshGlu2u-eHcVxdJhhE2cUm_4v7Vo4fg/exec"
 )
 
+# Video metadata mapping (from your table)
+VIDEO_CATALOG = {
+    "PptemekIV4s": {
+        "title": "Reimbursement approval using High Power Committee (HPC)?",
+        "url": "https://youtu.be/PptemekIV4s",
+    },
+    "Lul0rNeu-ys": {
+        "title": "Purchase & reimbursement of NA medicines from market",
+        "url": "https://youtube.com/shorts/Lul0rNeu-ys",
+    },
+    "WBo3Nles5ME": {
+        "title": "How to find reimbursement claim status & meaning of status messages",
+        "url": "https://youtu.be/WBo3Nles5ME",
+    },
+    "_A2FHFov-1s": {
+        "title": "Reimbursement claims cannot be rejected at any level. Decision is with CO ECHS",
+        "url": "https://youtube.com/shorts/_A2FHFov-1s",
+    },
+    "K0LmnRMxR3E": {
+        "title": "How to – Non Availability (NA) certificate & reimbursement financial limit",
+        "url": "https://youtu.be/K0LmnRMxR3E",
+    },
+    "TALESjqESn8": {
+        "title": "Medicines reimbursement steps made easy",
+        "url": "https://youtu.be/TALESjqESn8",
+    },
+}
+
 # ------------------------------------------------------------
 # Streamlit page configuration
 # ------------------------------------------------------------
@@ -48,7 +80,7 @@ st.set_page_config(
 )
 
 # ------------------------------------------------------------
-# Custom CSS (simple styling)
+# Custom CSS
 # ------------------------------------------------------------
 st.markdown(
     """
@@ -86,7 +118,7 @@ st.markdown(
 # ============================================================
 
 if "messages" not in st.session_state:
-    # list of dicts: {role: "user"|"assistant", content: str, sources: dict}
+    # list of dicts: {role: "user"|"assistant", content: str, sources: list}
     st.session_state.messages = []
 
 if "initialized" not in st.session_state:
@@ -101,9 +133,143 @@ if "run_query" not in st.session_state:
 if "run_suggested" not in st.session_state:
     st.session_state.run_suggested = False
 
+if "admin_mode" not in st.session_state:
+    st.session_state.admin_mode = False
+
+# ============================================================
+#  UTILS – METADATA & FORMATTING
+# ============================================================
+
+
+def parse_segment_header(text: str, source_file: str):
+    """
+    Parse VIDEO ID, SEGMENT, TIME from the header embedded in text.
+
+    Returns dict:
+    {
+      "video_id", "segment", "start_sec", "end_sec",
+      "body_text"
+    }
+    """
+    video_id = None
+    segment = None
+    start_sec = None
+    end_sec = None
+
+    # Video ID
+    m_vid = re.search(r"VIDEO ID\s*:\s*([A-Za-z0-9_-]+)", text)
+    if m_vid:
+        video_id = m_vid.group(1).strip()
+
+    # Segment
+    m_seg = re.search(r"SEGMENT\s*:\s*([0-9]+)", text)
+    if m_seg:
+        segment = int(m_seg.group(1))
+
+    # Time in seconds like "0.0 → 13.84"
+    m_time = re.search(r"TIME\s*:\s*([0-9.]+)\s*[^\d]+([0-9.]+)", text)
+    if m_time:
+        try:
+            start_sec = float(m_time.group(1))
+            end_sec = float(m_time.group(2))
+        except ValueError:
+            start_sec, end_sec = None, None
+
+    # Fallback from filename if needed
+    if video_id is None or segment is None:
+        m_fn = re.match(r"([A-Za-z0-9_-]+)_([0-9]+)\.txt", source_file)
+        if m_fn:
+            if video_id is None:
+                video_id = m_fn.group(1)
+            if segment is None:
+                segment = int(m_fn.group(2))
+
+    # Body text: after WHISPER TRANSCRIPT marker if present
+    body = text
+    marker = "=============== WHISPER TRANSCRIPT ==============="
+    if marker in text:
+        body = text.split(marker, 1)[1].strip()
+
+    return {
+        "video_id": video_id,
+        "segment": segment,
+        "start_sec": start_sec,
+        "end_sec": end_sec,
+        "body_text": body,
+    }
+
+
+def format_seconds(sec: float | None):
+    """Convert seconds (float) to mm:ss or hh:mm:ss string."""
+    if sec is None:
+        return "unknown"
+    s = int(sec)
+    h = s // 3600
+    m = (s % 3600) // 60
+    s2 = s % 60
+    if h > 0:
+        return f"{h:02d}:{m:02d}:{s2:02d}"
+    return f"{m:02d}:{s2:02d}"
+
+
+def get_video_info(video_id: str):
+    """Return (title, base_url) for a given video_id."""
+    if not video_id:
+        return "ECHS Training Video", ""
+    if video_id in VIDEO_CATALOG:
+        return VIDEO_CATALOG[video_id]["title"], VIDEO_CATALOG[video_id]["url"]
+    # Default fallback
+    return f"ECHS Training Video ({video_id})", f"https://youtu.be/{video_id}"
+
+
+def add_timestamp_to_url(url: str, start_sec: float | None):
+    """Append ?t=seconds (or &t=) to YouTube URL."""
+    if not url:
+        return ""
+    if start_sec is None:
+        return url
+    t = int(start_sec)
+    joiner = "&" if "?" in url else "?"
+    return f"{url}{joiner}t={t}s"
+
+
+def is_question_unclear(q: str) -> bool:
+    """Heuristic check for very short / vague questions."""
+    q = (q or "").strip()
+    if not q:
+        return True
+    words = q.split()
+    if len(words) <= 2:
+        return True
+    # Very short non-question phrases
+    if len(q) < 10 and not q.lower().startswith(
+        ("what", "how", "who", "why", "when", "where", "can", "is", "are")
+    ):
+        return True
+    return False
+
+
+def build_clarification_response(q: str) -> str:
+    """Message shown when the question is too sketchy."""
+    return f"""
+Your question **\"{q}\"** is a bit short or unclear, so I'm not sure what exactly you need.
+
+To help me give a precise answer, please:
+- Mention **who** it is about (veteran, spouse, dependent, parent).
+- Say whether it is about **registration, emergency care, referral, or reimbursement**.
+- Add key details like *empanelled / non-empanelled hospital*, *age of dependent*, *emergency vs routine*, etc.
+
+You can also try one of these more specific questions:
+- "How do I register for ECHS?"
+- "What is the procedure for emergency treatment in ECHS?"
+- "How do I claim reimbursement for treatment in a non-empanelled hospital?"
+- "Can my parents get emergency treatment at AFMS hospital on cashless basis?"
+"""
+
 # ============================================================
 #  INITIALIZATION – KB + LLM
 # ============================================================
+
 
 @st.cache_resource
 def initialize_system():
@@ -111,20 +277,18 @@ def initialize_system():
     Initialize:
     - Groq client
     - FAISS index
-    - Segment dataframe from parquet
+    - Segments dataframe
     - Embedding model
     """
-
-    # 1) Groq client (API key in Streamlit secrets)
     try:
         groq_api_key = st.secrets["GROQ_API_KEY"]
     except KeyError:
         raise RuntimeError(
             "GROQ_API_KEY not found in Streamlit secrets. Please configure it."
         )
+
     client = Groq(api_key=groq_api_key)
 
-    # 2) Check that required files exist
     if not INDEX_PATH.exists():
         raise FileNotFoundError(
             f"Knowledge base index file not found: {INDEX_PATH}. Please upload it."
@@ -134,13 +298,9 @@ def initialize_system():
             f"Knowledge base data file not found: {PARQUET_PATH}. Please upload it."
         )
 
-    # 3) Load FAISS index
     index = faiss.read_index(str(INDEX_PATH))
+    df = pd.read_parquet(PARQUET_PATH)
 
-    # 4) Load segments dataframe
-    df = pd.read_parquet(PARQUET_PATH)  # columns: segment_id, source_file, rel_path, text
-
-    # 5) Load embedding model (for queries)
     embedding_model = SentenceTransformer(EMBEDDING_MODEL_NAME)
 
     return client, index, df, embedding_model
@@ -150,6 +310,7 @@ def initialize_system():
 #  RETRIEVAL + LLM
 # ============================================================
 
+
 def retrieve_context(question: str, index, df: pd.DataFrame, embedding_model, n_results: int = 5):
     """Embed question and retrieve top-k segments from FAISS."""
     query_embedding = embedding_model.encode([question])
@@ -157,28 +318,55 @@ def retrieve_context(question: str, index, df: pd.DataFrame, embedding_model, n_
 
     distances, indices = index.search(query_embedding, n_results)
 
-    # Get relevant rows
-    rows = [df.iloc[i] for i in indices[0]]
-
-    # Build context and simple "sources" (from file names)
     context_parts = []
-    sources = {}
-    for row, dist in zip(rows, distances[0]):
-        src = str(row.get("source_file", "segment"))
-        text = str(row.get("text", ""))
-        context_parts.append(f"From file: {src}\n{text}")
-        if src not in sources:
-            sources[src] = f"(local segment, distance={dist:.3f})"
+    hits = []
+
+    for dist, idx in zip(distances[0], indices[0]):
+        row = df.iloc[idx]
+        meta = parse_segment_header(row["text"], row["source_file"])
+
+        video_id = meta["video_id"]
+        segment = meta["segment"]
+        start_sec = meta["start_sec"]
+        end_sec = meta["end_sec"]
+        body_text = meta["body_text"]
+
+        title, base_url = get_video_info(video_id)
+        url_with_t = add_timestamp_to_url(base_url, start_sec)
+
+        start_str = format_seconds(start_sec)
+        end_str = format_seconds(end_sec)
+
+        # Build context chunk for LLM
+        header = f"Video: {title}\nTime: {start_str} → {end_str}"
+        chunk = f"{header}\n{body_text}"
+        context_parts.append(chunk)
+
+        hits.append(
+            {
+                "video_id": video_id,
+                "video_title": title,
+                "video_url": url_with_t,
+                "base_url": base_url,
+                "start_sec": start_sec,
+                "end_sec": end_sec,
+                "start_str": start_str,
+                "end_str": end_str,
+                "segment_id": int(row["segment_id"]),
+                "source_file": row["source_file"],
+                "distance": float(dist),
+            }
+        )
 
     context = "\n\n---\n\n".join(context_parts)
-    return context, sources
+    return context, hits
 
 
 def build_prompt(question: str, context: str) -> str:
     """Build the prompt for the LLM."""
     prompt = f"""You are an expert assistant helping people understand the Ex-Servicemen Contributory Health Scheme (ECHS).
 
-You will answer based ONLY on the information given below from ECHS training videos and transcripts. 
+You must answer based ONLY on the information given below from ECHS training videos and transcripts.
 If the answer is not clearly present in the context, say you are not sure and suggest checking with the ECHS polyclinic or official instructions.
 
 ================= CONTEXT START =================
@@ -229,15 +417,16 @@ def call_llm(prompt: str, client: Groq):
 
 def get_answer(question: str, client, index, df, embedding_model, n_results: int = 5):
     """High-level: retrieve context and ask the LLM."""
-    context, sources = retrieve_context(question, index, df, embedding_model, n_results)
+    context, hits = retrieve_context(question, index, df, embedding_model, n_results)
     prompt = build_prompt(question, context)
     answer = call_llm(prompt, client)
-    return answer, sources
+    return answer, hits
 
 
 # ============================================================
 #  FEEDBACK LOGGING
 # ============================================================
+
 
 def log_feedback(question: str, answer: str, rating: int, comment: str):
     """
@@ -245,6 +434,7 @@ def log_feedback(question: str, answer: str, rating: int, comment: str):
     """
     payload = {
         "timestamp": datetime.utcnow().isoformat(),
+        "session_id": "",
         "question": question,
         "answer": answer,
         "rating": rating,
@@ -262,13 +452,13 @@ def log_feedback(question: str, answer: str, rating: int, comment: str):
                 f"Feedback not confirmed by server (status {response.status_code})."
             )
     except Exception as e:
-        # Show a soft warning, but don't break the app
         st.warning(f"Could not send feedback to log: {e}")
 
 
 # ============================================================
 #  UI HELPERS
 # ============================================================
+
 
 def submit_question():
     """Common handler when user hits Enter or clicks Get Answer."""
@@ -391,7 +581,6 @@ def render_question_block():
                 ):
                     handle_example_click("How do I claim medical reimbursement in ECHS?")
 
-    # Main "Get Answer" button (same handler as Enter)
     st.button(
         "🔍 Get Answer",
         use_container_width=True,
@@ -407,6 +596,8 @@ def render_conversation_and_feedback():
 
     st.markdown("---")
     st.markdown("### 💬 Conversation History")
+
+    admin_mode = st.session_state.admin_mode
 
     # Show latest Q–A pairs first
     for i in range(len(st.session_state.messages) - 1, -1, -2):
@@ -425,12 +616,27 @@ def render_conversation_and_feedback():
         st.markdown(f"**💡 Answer:**\n\n{answer_text}")
         st.markdown("</div>", unsafe_allow_html=True)
 
-        # Sources (from retrieval)
-        if "sources" in answer_msg and answer_msg["sources"]:
+        sources = answer_msg.get("sources", [])
+
+        if sources:
             st.markdown('<div class="source-box">', unsafe_allow_html=True)
-            st.markdown("**📄 Information taken from these segments/files:**")
-            for j, (src, desc) in enumerate(answer_msg["sources"].items(), start=1):
-                st.markdown(f"{j}. `{src}` — {desc}")
+            st.markdown("**📄 Information verified from these ECHS videos:**")
+            for j, hit in enumerate(sources, start=1):
+                title = hit["video_title"]
+                url = hit["video_url"]
+                start_str = hit["start_str"]
+                end_str = hit["end_str"]
+                video_id = hit["video_id"]
+                st.markdown(
+                    f"{j}. **{title}**  \n"
+                    f"   ⏱ {start_str} → {end_str}  \n"
+                    f"   🔗 [Watch this part]({url})"
+                )
+                if admin_mode:
+                    st.markdown(
+                        f"   🛠 `id={video_id}` | segment={hit['segment_id']} | "
+                        f"file={hit['source_file']} | faiss={hit['distance']:.3f}"
+                    )
             st.markdown("</div>", unsafe_allow_html=True)
 
         # Rating + comment
@@ -487,8 +693,14 @@ Built with ❤️ for veterans and families.
 #  MAIN
 # ============================================================
 
+
 def main():
     render_header()
+
+    # Sidebar admin toggle
+    st.session_state.admin_mode = st.sidebar.checkbox(
+        "🛠 Admin / debug mode", value=st.session_state.admin_mode
+    )
 
     # Initialize once (cached)
     if not st.session_state.initialized:
@@ -519,19 +731,25 @@ def main():
         # Store user message
         st.session_state.messages.append({"role": "user", "content": q_text})
 
-        with st.spinner("🔍 Searching ECHS knowledge base... 🤖 Generating answer..."):
-            answer, sources = get_answer(
-                q_text,
-                st.session_state.client,
-                st.session_state.index,
-                st.session_state.df,
-                st.session_state.embedding_model,
+        # If too vague, ask for clarification instead of hitting LLM
+        if is_question_unclear(q_text):
+            clarification = build_clarification_response(q_text)
+            st.session_state.messages.append(
+                {"role": "assistant", "content": clarification, "sources": []}
             )
+        else:
+            with st.spinner("🔍 Searching ECHS knowledge base... 🤖 Generating answer..."):
+                answer, hits = get_answer(
+                    q_text,
+                    st.session_state.client,
+                    st.session_state.index,
+                    st.session_state.df,
+                    st.session_state.embedding_model,
+                )
 
-        # Store assistant message
-        st.session_state.messages.append(
-            {"role": "assistant", "content": answer, "sources": sources}
-        )
+            st.session_state.messages.append(
+                {"role": "assistant", "content": answer, "sources": hits}
+            )
 
     # Show conversation + feedback
     render_conversation_and_feedback()
