@@ -500,7 +500,7 @@ def render_question_block():
         on_change=submit_question,  # Enter key
     )
 
-       with st.expander("📝 Browse example questions by latest videos"):
+           with st.expander("📝 Browse example questions by latest videos"):
         tab1, tab2, tab3 = st.tabs(
             [
                 "NA medicines & NA certificate",
@@ -817,5 +817,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
