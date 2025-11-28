@@ -489,105 +489,50 @@ def render_header():
 
 
 def render_question_block():
-    """Render text input + example questions, trigger run_query when needed."""
+    # 1. Show example questions section
+    render_example_questions()
 
-    st.text_input(
-        "💬 Ask your question:",
-        placeholder="e.g., What is ECHS? How do I register? What documents are required?",
-        key="question_input",
-        on_change=submit_question,  # Enter key
-    )
+    # 2. Decide where the question came from:
+    #    either a clicked example or manual chat input
+    question = None
 
-    with st.expander("📝 Browse example questions by topic"):
-        tab1, tab2, tab3 = st.tabs(
-            ["Registration & Eligibility", "Emergency Care", "Referrals & Reimbursement"]
+    if st.session_state.get("from_example"):
+        # Example question was clicked in previous run
+        question = st.session_state.get("prefill_question")
+        # reset flags so it behaves like a normal one-off question
+        st.session_state["from_example"] = False
+    else:
+        # Normal chat input (called exactly once)
+        question = st.chat_input(
+            "Ask your question:"
         )
 
-        with tab1:
-            st.markdown("**Registration & Eligibility**")
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("What is ECHS?", use_container_width=True, key="q1"):
-                    handle_example_click("What is ECHS?")
-                if st.button("Who is eligible for ECHS?", use_container_width=True, key="q2"):
-                    handle_example_click("Who is eligible for ECHS?")
-            with col2:
-                if st.button("How do I register for ECHS?", use_container_width=True, key="q3"):
-                    handle_example_click("How do I register for ECHS?")
-                if st.button(
-                    "What documents are required for ECHS registration?",
-                    use_container_width=True,
-                    key="q4",
-                ):
-                    handle_example_click("What documents are required for ECHS registration?")
+    # 3. If no question (user hasn’t typed or clicked yet), stop here
+    if not question:
+        return
 
-        with tab2:
-            st.markdown("**Emergency Care**")
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button(
-                    "Can I get emergency treatment at AFMS hospital?",
-                    use_container_width=True,
-                    key="q5",
-                ):
-                    handle_example_click("Can I get emergency treatment at AFMS hospital?")
-                if st.button(
-                    "What is the procedure for emergency treatment in ECHS?",
-                    use_container_width=True,
-                    key="q6",
-                ):
-                    handle_example_click("What is the procedure for emergency treatment in ECHS?")
-            with col2:
-                if st.button(
-                    "Can my parents be treated at AFMS in emergency?",
-                    use_container_width=True,
-                    key="q7",
-                ):
-                    handle_example_click(
-                        "In an emergency, can my parents be treated at AFMS hospital on cashless basis?"
-                    )
-                if st.button(
-                    "What about non-empanelled hospitals?",
-                    use_container_width=True,
-                    key="q8",
-                ):
-                    handle_example_click("Can I get treatment in non-empanelled hospitals?")
+    # 4. Render user message in chat history
+    with st.chat_message("user"):
+        st.markdown(question)
 
-        with tab3:
-            st.markdown("**Referrals & Reimbursement**")
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("What is HSR?", use_container_width=True, key="q9"):
-                    handle_example_click("What is HSR?")
-                if st.button(
-                    "Can Non-MIL Polyclinic refer to AFMS?",
-                    use_container_width=True,
-                    key="q10",
-                ):
-                    handle_example_click("Can a Non MIL Polyclinic refer ESM to AFMS hospital?")
-            with col2:
-                if st.button(
-                    "Can 26-year-old dependent be referred?",
-                    use_container_width=True,
-                    key="q11",
-                ):
-                    handle_example_click(
-                        "Can my dependent who is 26 years old be referred by the polyclinic to AFMS Hospital?"
-                    )
-                if st.button(
-                    "How do I claim reimbursement?",
-                    use_container_width=True,
-                    key="q12",
-                ):
-                    handle_example_click("How do I claim medical reimbursement in ECHS?")
+    # 5. Call your existing answer pipeline
+    #    (replace with your real function / logic)
+    with st.chat_message("assistant"):
+        with st.spinner("Thinking..."):
+            answer, debug_info = answer_question(
+                question=question,
+                faiss_index=st.session_state["faiss_index"],
+                segments_df=st.session_state["segments_df"],
+                admin_mode=st.session_state.get("admin_mode", False),
+            )
+            st.markdown(answer)
 
-    st.button(
-        "🔍 Get Answer",
-        use_container_width=True,
-        type="primary",
-        on_click=submit_question,
+    # 6. Optionally log feedback / distances / debug info here
+    render_feedback_and_debug_blocks(
+        user_question=question,
+        answer=answer,
+        debug_info=debug_info,
     )
-
 
 def render_conversation_and_feedback():
     """Show conversation history and feedback controls."""
@@ -760,3 +705,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
