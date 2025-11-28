@@ -3,6 +3,7 @@ ECHS Assistant – Streamlit App
 
 - Uses precomputed FAISS index over ECHS video segments
 - SentenceTransformers for query embeddings
+
 - Groq LLM (llama-3.3-70b-versatile) for answers
 - Google Apps Script for feedback logging
 - Video/time metadata parsed from segment headers:
@@ -470,7 +471,8 @@ def submit_question():
 
 def handle_example_click(text: str):
     """When a suggested question is clicked."""
-    st.session_state.question_input = text
+    # Do NOT try to modify the text_input widget value here.
+    # Just mark the question as pending and trigger the query.
     st.session_state.pending_question = text
     st.session_state.run_query = True
 
@@ -760,3 +762,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
