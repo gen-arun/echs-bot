@@ -3,7 +3,6 @@ ECHS Assistant – Streamlit App
 
 - Uses precomputed FAISS index over ECHS video segments
 - SentenceTransformers for query embeddings
-
 - Groq LLM (llama-3.3-70b-versatile) for answers
 - Google Apps Script for feedback logging
 - Video/time metadata parsed from segment headers:
@@ -471,8 +470,9 @@ def submit_question():
 
 def handle_example_click(text: str):
     """When a suggested question is clicked."""
-    # Do NOT try to modify the text_input widget value here.
-    # Just mark the question as pending and trigger the query.
+    # IMPORTANT: do NOT modify question_input widget value here.
+    # Just mark the question to be run; main loop will treat it
+    # exactly like a typed question.
     st.session_state.pending_question = text
     st.session_state.run_query = True
 
@@ -495,17 +495,18 @@ def render_question_block():
 
     st.text_input(
         "💬 Ask your question:",
-        placeholder="e.g., What is ECHS? How do I register? What documents are required?",
+        placeholder="e.g., How do I claim medicines reimbursement? What is an NA certificate?",
         key="question_input",
         on_change=submit_question,  # Enter key
     )
 
-           with st.expander("📝 Browse example questions by latest videos"):
+    # Suggested questions – updated to latest reimbursement videos
+    with st.expander("📝 Browse example questions by latest videos"):
         tab1, tab2, tab3 = st.tabs(
             [
                 "NA medicines & NA certificate",
-                "Reimbursement approval & rules",
-                "Claim status & reimbursement steps",
+                "HPC / CO ECHS & approval",
+                "Claim status & steps",
             ]
         )
 
@@ -817,6 +818,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
