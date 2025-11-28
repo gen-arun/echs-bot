@@ -500,88 +500,143 @@ def render_question_block():
         on_change=submit_question,  # Enter key
     )
 
-    with st.expander("📝 Browse example questions by topic"):
+       with st.expander("📝 Browse example questions by latest videos"):
         tab1, tab2, tab3 = st.tabs(
-            ["Registration & Eligibility", "Emergency Care", "Referrals & Reimbursement"]
+            [
+                "NA medicines & NA certificate",
+                "Reimbursement approval & rules",
+                "Claim status & reimbursement steps",
+            ]
         )
 
+        # ---------------- Tab 1: NA medicines & NA certificate ----------------
         with tab1:
-            st.markdown("**Registration & Eligibility**")
+            st.markdown("**Non-Availability (NA) medicines and NA certificate**")
             col1, col2 = st.columns(2)
-            with col1:
-                if st.button("What is ECHS?", use_container_width=True, key="q1"):
-                    handle_example_click("What is ECHS?")
-                if st.button("Who is eligible for ECHS?", use_container_width=True, key="q2"):
-                    handle_example_click("Who is eligible for ECHS?")
-            with col2:
-                if st.button("How do I register for ECHS?", use_container_width=True, key="q3"):
-                    handle_example_click("How do I register for ECHS?")
-                if st.button(
-                    "What documents are required for ECHS registration?",
-                    use_container_width=True,
-                    key="q4",
-                ):
-                    handle_example_click("What documents are required for ECHS registration?")
 
+            with col1:
+                if st.button(
+                    "How can I buy NA medicines from the market and claim reimbursement?",
+                    use_container_width=True,
+                    key="na_q1",
+                ):
+                    handle_example_click(
+                        "How can I buy non-available (NA) medicines from the market and claim reimbursement in ECHS?"
+                    )
+
+                if st.button(
+                    "What is a Non-Availability (NA) certificate in ECHS?",
+                    use_container_width=True,
+                    key="na_q2",
+                ):
+                    handle_example_click(
+                        "What is a Non-Availability (NA) certificate in ECHS and when is it needed?"
+                    )
+
+            with col2:
+                if st.button(
+                    "What is the financial limit for reimbursement using an NA certificate?",
+                    use_container_width=True,
+                    key="na_q3",
+                ):
+                    handle_example_click(
+                        "What is the financial limit for reimbursement when medicines are bought using a Non-Availability (NA) certificate?"
+                    )
+
+                if st.button(
+                    "Who issues the NA certificate and what details must it contain?",
+                    use_container_width=True,
+                    key="na_q4",
+                ):
+                    handle_example_click(
+                        "Who issues the NA certificate in ECHS and what details must it contain?"
+                    )
+
+        # ------------- Tab 2: Reimbursement approval & rules ------------------
         with tab2:
-            st.markdown("**Emergency Care**")
+            st.markdown("**High Power Committee (HPC), CO ECHS and reimbursement approval**")
             col1, col2 = st.columns(2)
-            with col1:
-                if st.button(
-                    "Can I get emergency treatment at AFMS hospital?",
-                    use_container_width=True,
-                    key="q5",
-                ):
-                    handle_example_click("Can I get emergency treatment at AFMS hospital?")
-                if st.button(
-                    "What is the procedure for emergency treatment in ECHS?",
-                    use_container_width=True,
-                    key="q6",
-                ):
-                    handle_example_click("What is the procedure for emergency treatment in ECHS?")
-            with col2:
-                if st.button(
-                    "Can my parents be treated at AFMS in emergency?",
-                    use_container_width=True,
-                    key="q7",
-                ):
-                    handle_example_click(
-                        "In an emergency, can my parents be treated at AFMS hospital on cashless basis?"
-                    )
-                if st.button(
-                    "What about non-empanelled hospitals?",
-                    use_container_width=True,
-                    key="q8",
-                ):
-                    handle_example_click("Can I get treatment in non-empanelled hospitals?")
 
-        with tab3:
-            st.markdown("**Referrals & Reimbursement**")
-            col1, col2 = st.columns(2)
             with col1:
-                if st.button("What is HSR?", use_container_width=True, key="q9"):
-                    handle_example_click("What is HSR?")
                 if st.button(
-                    "Can Non-MIL Polyclinic refer to AFMS?",
+                    "What is the High Power Committee (HPC) in ECHS reimbursements?",
                     use_container_width=True,
-                    key="q10",
-                ):
-                    handle_example_click("Can a Non MIL Polyclinic refer ESM to AFMS hospital?")
-            with col2:
-                if st.button(
-                    "Can 26-year-old dependent be referred?",
-                    use_container_width=True,
-                    key="q11",
+                    key="hpc_q1",
                 ):
                     handle_example_click(
-                        "Can my dependent who is 26 years old be referred by the polyclinic to AFMS Hospital?"
+                        "What is the role of the High Power Committee (HPC) in ECHS reimbursement approval?"
                     )
+
                 if st.button(
-                    "How do I claim reimbursement?",
+                    "When is HPC approval required for reimbursement?",
                     use_container_width=True,
-                    key="q12",
+                    key="hpc_q2",
                 ):
-                    handle_example_click("How do I claim medical reimbursement in ECHS?")
+                    handle_example_click(
+                        "In which cases is High Power Committee (HPC) approval required for reimbursement in ECHS?"
+                    )
+
+            with col2:
+                if st.button(
+                    "Can ECHS reimbursement claims be rejected at any level?",
+                    use_container_width=True,
+                    key="hpc_q3",
+                ):
+                    handle_example_click(
+                        "Can ECHS reimbursement claims be rejected at any level, or is the decision only with CO ECHS?"
+                    )
+
+                if st.button(
+                    "What is the role of CO ECHS in deciding reimbursement claims?",
+                    use_container_width=True,
+                    key="hpc_q4",
+                ):
+                    handle_example_click(
+                        "What is the role of CO ECHS in the final decision on reimbursement claims?"
+                    )
+
+        # ------ Tab 3: Claim status & medicines reimbursement steps ----------
+        with tab3:
+            st.markdown("**Checking claim status and step-by-step reimbursement process**")
+            col1, col2 = st.columns(2)
+
+            with col1:
+                if st.button(
+                    "How do I check the status of my ECHS reimbursement claim online?",
+                    use_container_width=True,
+                    key="status_q1",
+                ):
+                    handle_example_click(
+                        "How can I check the status of my ECHS reimbursement claim online?"
+                    )
+
+                if st.button(
+                    "What do the different ECHS claim status messages mean?",
+                    use_container_width=True,
+                    key="status_q2",
+                ):
+                    handle_example_click(
+                        "What do the different reimbursement claim status messages mean in the ECHS portal?"
+                    )
+
+            with col2:
+                if st.button(
+                    "What are the steps to submit a medicine reimbursement claim?",
+                    use_container_width=True,
+                    key="status_q3",
+                ):
+                    handle_example_click(
+                        "What are the step-by-step procedures to submit a medicines reimbursement claim in ECHS?"
+                    )
+
+                if st.button(
+                    "Which documents should I attach with a medicines reimbursement claim?",
+                    use_container_width=True,
+                    key="status_q4",
+                ):
+                    handle_example_click(
+                        "Which documents should I attach with a medicines reimbursement claim in ECHS?"
+                    )
 
     st.button(
         "🔍 Get Answer",
@@ -762,4 +817,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
