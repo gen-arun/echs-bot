@@ -5,355 +5,160 @@ from typing import List, Tuple, Dict, Any
 import numpy as np
 import pandas as pd
 import streamlit as st
-
 import faiss
-
-# If you are using the **new** OpenAI client, comment the next 2 lines
-# and use the section marked "NEW OPENAI CLIENT" below.
-import openai
-
+import openai   # ← legacy style
 
 # =========================================================
-# CONFIG
+# FILE PATHS (change only if your filenames differ)
 # =========================================================
-
 FAISS_INDEX_PATH = "echs_faiss.index"
 SEGMENTS_PARQUET_PATH = "echs_segments_master.parquet"
 
-# Google Sheet – replace with your actual ID / URL or leave blank
-GOOGLE_SHEET_ID = os.getenv("ECHS_FEEDBACK_SHEET_ID", "")
+TOP_K = 4  # retrieved chunks per answer
 
 SYSTEM_PROMPT = """
-You are an assistant that answers questions about the Ex-Servicemen Contributory Health Scheme (ECHS).
-
-Use ONLY the provided context from official ECHS training videos and transcripts.
-If the answer is not present or is unclear, say you are not sure and suggest asking the ECHS polyclinic or checking official ECHS instructions.
-
-Be concise and clear. Where relevant, mention that rules can change and beneficiaries should confirm with official sources.
+You answer questions about ECHS based ONLY on the provided training-video transcripts.
+If answer not found in retrieved context → say so politely. Avoid hallucination.
+Answer clearly, short, helpful.
 """
 
-# Curated example questions – based on your 6 ECHS videos
-EXAMPLE_QUESTIONS: Dict[str, List[str]] = {
+# =========================================================
+# 💡 Example Questions (appear as buttons)
+# =========================================================
+EXAMPLE_QUESTIONS = {
     "Basics of ECHS": [
         "What is ECHS and who is eligible?",
-        "How do I register for ECHS as a veteran?",
+        "How do I register for ECHS?",
         "What documents are required for ECHS enrolment?",
     ],
-    "ECHS smart card & dependents": [
+    "Smart Card & Dependents": [
         "How do I apply for an ECHS smart card?",
-        "How can I add or delete dependents in ECHS?",
-        "What should I do if my ECHS smart card is lost or damaged?",
+        "How do I add or delete dependents?",
+        "What to do if the smart card is lost?",
     ],
-    "Using ECHS polyclinics & hospitals": [
-        "How do I take treatment at an ECHS polyclinic?",
-        "What is the procedure for referral to empanelled hospitals?",
-        "How are emergency admissions handled under ECHS?",
+    "Polyclinic & Hospital Use": [
+        "How does treatment at an ECHS polyclinic work?",
+        "Procedure for referral to empanelled hospitals?",
+        "How are emergency cases treated?",
     ],
-    "Bills, claims & problems": [
+    "Billing & Issues": [
         "How are hospital bills settled under ECHS?",
-        "What can I do if a hospital refuses cashless treatment?",
-        "Where can I complain if I face problems with ECHS services?",
+        "What if hospital refuses cashless treatment?",
+        "Where to complain if problems occur?",
     ],
 }
 
-TOP_K = 4  # number of segments to retrieve
+# =========================================================
+# LOADING (cached = faster)
+# =========================================================
+@st.cache_resource
+def load_faiss():
+    return faiss.read_index(FAISS_INDEX_PATH)
 
+@st.cache_data
+def load_segments():
+    return pd.read_parquet(SEGMENTS_PARQUET_PATH)
 
 # =========================================================
-# CACHED LOADERS
+# EMBEDDING + LLM (Legacy OpenAI)
 # =========================================================
-
-@st.cache_resource(show_spinner=True)
-def load_faiss_index(path: str):
-    if not os.path.exists(path):
-        raise FileNotFoundError(f"FAISS index not found at {path}")
-    return faiss.read_index(path)
-
-
-@st.cache_data(show_spinner=True)
-def load_segments_df(path: str) -> pd.DataFrame:
-    if not os.path.exists(path):
-        raise FileNotFoundError(f"Segments parquet not found at {path}")
-    df = pd.read_parquet(path)
-    return df
-
-
-# =========================================================
-# EMBEDDINGS & LLM
-# =========================================================
-
-def get_openai_model_name() -> str:
-    # adjust if you prefer a different model
-    return os.getenv("ECHS_OPENAI_MODEL", "gpt-4o-mini")
-
-
-def embed_query(text: str) -> np.ndarray:
-    """
-    Returns a 1D numpy array embedding for the query.
-    Uses OpenAI embeddings. Adjust model name as needed.
-    """
-    # LEGACY OPENAI CLIENT
-    emb_model = os.getenv("ECHS_EMBED_MODEL", "text-embedding-3-small")
+def embed(text: str) -> np.ndarray:
     resp = openai.Embedding.create(
-        model=emb_model,
-        input=text,
+        model="text-embedding-3-small",
+        input=text
     )
-    vec = np.array(resp["data"][0]["embedding"], dtype="float32")
-    return vec
+    return np.array(resp["data"][0]["embedding"]).astype("float32")
 
-    # --- NEW OPENAI CLIENT EXAMPLE (if you upgrade) ---
-    # from openai import OpenAI
-    # client = OpenAI()
-    # emb_model = os.getenv("ECHS_EMBED_MODEL", "text-embedding-3-small")
-    # resp = client.embeddings.create(model=emb_model, input=text)
-    # vec = np.array(resp.data[0].embedding, dtype="float32")
-    # return vec
-
-
-def call_llm(context: str, question: str) -> str:
-    """
-    Calls OpenAI chat completion with RAG context.
-    """
-    model = get_openai_model_name()
-
-    # LEGACY OPENAI CLIENT
-    completion = openai.ChatCompletion.create(
-        model=model,
+def ask_llm(context: str, question: str) -> str:
+    resp = openai.ChatCompletion.create(
+        model="gpt-4o-mini",
         messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {
-                "role": "user",
-                "content": f"Context from ECHS training materials:\n\n{context}\n\n"
-                           f"User question: {question}",
-            },
+            {"role":"system", "content":SYSTEM_PROMPT},
+            {"role":"user",
+             "content":f"Context:\n{context}\n\nQuestion: {question}"}
         ],
-        temperature=0.2,
+        temperature=0.2
     )
-    return completion["choices"][0]["message"]["content"].strip()
-
-    # --- NEW OPENAI CLIENT EXAMPLE (if you upgrade) ---
-    # from openai import OpenAI
-    # client = OpenAI()
-    # completion = client.chat.completions.create(
-    #     model=model,
-    #     messages=[
-    #         {"role": "system", "content": SYSTEM_PROMPT},
-    #         {"role": "user",
-    #          "content": f"Context from ECHS training materials:\n\n{context}\n\n"
-    #                     f"User question: {question}"},
-    #     ],
-    #     temperature=0.2,
-    # )
-    # return completion.choices[0].message.content.strip()
-
+    return resp["choices"][0]["message"]["content"].strip()
 
 # =========================================================
-# RETRIEVAL
+# SEARCH
 # =========================================================
+def retrieve(query, index, df, k=TOP_K):
+    q = embed(query).reshape(1,-1)
+    D,I = index.search(q,k)
+    out=[]
+    for idx,dist in zip(I[0],D[0]):
+        row=df.iloc[idx].copy()
+        row["_dist"]=float(dist)
+        out.append(row)
+    return pd.DataFrame(out)
 
-def search_segments(
-    query: str,
-    index,
-    segments_df: pd.DataFrame,
-    top_k: int = TOP_K,
-) -> Tuple[pd.DataFrame, List[float]]:
-    """
-    Embed query, search FAISS, return subset dataframe + distances list.
-    """
-    q_emb = embed_query(query).reshape(1, -1)
-    distances, indices = index.search(q_emb, top_k)
-
-    idxs = indices[0]
-    dists = distances[0].tolist()
-
-    valid_rows = []
-    valid_dists = []
-    for i, d in zip(idxs, dists):
-        if i < 0 or i >= len(segments_df):
-            continue
-        row = segments_df.iloc[i].copy()
-        row["_distance"] = d
-        valid_rows.append(row)
-        valid_dists.append(d)
-
-    if not valid_rows:
-        return pd.DataFrame(), []
-
-    result_df = pd.DataFrame(valid_rows)
-    return result_df, valid_dists
-
-
-def format_time_seconds(sec: Any) -> str:
-    try:
-        sec = int(sec)
-    except Exception:
-        return ""
-    mins = sec // 60
-    s = sec % 60
-    return f"{mins:02d}:{s:02d}"
-
-
-def build_context_from_segments(segments_df: pd.DataFrame) -> str:
-    """
-    Concatenate retrieved segments into a context string for the LLM.
-    """
-    if segments_df.empty:
-        return ""
-
-    texts = []
-    for _, row in segments_df.iterrows():
-        text = row.get("text", "") or row.get("segment_text", "") or row.get("chunk", "")
-        video_title = row.get("video_title", "") or row.get("source_title", "")
-        start_time = format_time_seconds(row.get("start_time", row.get("start_sec", 0)))
-        prefix = ""
-        if video_title or start_time:
-            prefix = f"[Source: {video_title} @ {start_time}] "
-        texts.append(prefix + str(text))
-    return "\n\n".join(texts)
-
+def build_context(rows:pd.DataFrame) -> str:
+    if rows.empty: return ""
+    parts=[]
+    for _,r in rows.iterrows():
+        txt=r.get("text","") or r.get("chunk","")
+        t=r.get("video_title","")
+        tm=int(r.get("start_time",0))
+        stamp=f"[{t} @ {tm//60:02d}:{tm%60:02d}] "
+        parts.append(stamp+txt)
+    return "\n\n".join(parts)
 
 # =========================================================
-# FEEDBACK LOGGING (Google Sheets stub)
+# UI – Example Question Buttons
 # =========================================================
-
-def log_feedback_to_gsheet(
-    question: str,
-    answer: str,
-    rating: int,
-    comment: str,
-    meta: Dict[str, Any],
-):
-    """
-    Append a row to Google Sheet.
-    This is wrapped in try/except so app never crashes
-    if Sheets is not configured.
-    """
-    if not GOOGLE_SHEET_ID:
-        # silently skip if not configured
-        return
-
-    try:
-        import gspread
-        from google.oauth2.service_account import Credentials
-
-        scopes = [
-            "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/drive",
-        ]
-        # Path to your service-account JSON in Streamlit secrets or env
-        svc_json_path = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "")
-        if not svc_json_path or not os.path.exists(svc_json_path):
-            return
-
-        creds = Credentials.from_service_account_file(svc_json_path, scopes=scopes)
-        client = gspread.authorize(creds)
-        sh = client.open_by_key(GOOGLE_SHEET_ID)
-        ws = sh.sheet1
-
-        ts = time.strftime("%Y-%m-%d %H:%M:%S")
-        row = [
-            ts,
-            question,
-            answer,
-            rating,
-            comment,
-            meta.get("retrieved_titles", ""),
-            meta.get("retrieved_distances", ""),
-        ]
-        ws.append_row(row)
-
-    except Exception as e:
-        # Avoid breaking the app; optionally show a small notice in admin mode.
-        st.session_state["feedback_error"] = str(e)
-
-
-# =========================================================
-# UI HELPERS
-# =========================================================
-
-def render_example_questions():
-    """
-    Show curated example questions grouped by topic.
-    Clicking a question sets it as the current question.
-    """
-    if not EXAMPLE_QUESTIONS:
-        return
-
-    with st.expander("Browse example questions by topic"):
-        for topic, questions in EXAMPLE_QUESTIONS.items():
+def example_panel():
+    with st.expander("📌 Browse example questions"):
+        for topic,qs in EXAMPLE_QUESTIONS.items():
             st.markdown(f"**{topic}**")
-            cols = st.columns(2)
-            for i, q in enumerate(questions):
-                col = cols[i % 2]
-                key = f"exq_{abs(hash(topic + q))}_{i}"
-                if col.button(q, key=key):
-                    st.session_state["prefill_question"] = q
-                    st.session_state["from_example"] = True
+            cols=st.columns(2)
+            for i,q in enumerate(qs):
+                if cols[i%2].button(q):
+                    st.session_state["auto_q"]=q
                     st.experimental_rerun()
 
+# =========================================================
+# MAIN Q&A BLOCK
+# =========================================================
+def chat_block():
+    example_panel()
 
-def render_sources_block(retrieved_df: pd.DataFrame):
-    """
-    Show retrieved source segments under the answer (for end users).
-    """
-    if retrieved_df.empty:
-        return
+    # if sample clicked → auto ask
+    question = st.session_state.pop("auto_q",None) or st.chat_input("Ask here...")
 
-    st.markdown("###### Sources used from ECHS training materials")
-    for _, row in retrieved_df.iterrows():
-        title = row.get("video_title", "") or row.get("source_title", "ECHS training video")
-        text = row.get("text", "") or row.get("segment_text", "") or row.get("chunk", "")
-        start_time = format_time_seconds(row.get("start_time", row.get("start_sec", 0)))
-        url = row.get("video_url", "") or row.get("source_url", "")
+    if not question: return
 
-        # Build a timestamped URL if possible
-        ts_link = ""
-        if url and start_time:
-            # assume start_time is in seconds for URL
-            try:
-                sec = int(row.get("start_time", row.get("start_sec", 0)))
-            except Exception:
-                sec = 0
-            if "youtube" in url or "youtu.be" in url:
-                sep = "&" if "?" in url else "?"
-                ts_link = f"{url}{sep}t={sec}s"
-            else:
-                ts_link = url
+    with st.chat_message("user"):
+        st.write(question)
 
-        bullet = f"- **{title}**"
-        if start_time:
-            bullet += f" at `{start_time}`"
-        if ts_link:
-            bullet += f" ([open video]({ts_link}))"
-        st.markdown(bullet)
-        st.markdown(f"> {text[:300]}{'...' if len(text) > 300 else ''}")
+    with st.chat_message("assistant"):
+        with st.spinner("Searching ECHS training material..."):
+            df = retrieve(question, st.session_state.idx, st.session_state.segs)
+            ctx = build_context(df)
+            if not ctx:
+                st.write("No matching info in available training videos. Please confirm with official ECHS sources.")
+                return
+            ans = ask_llm(ctx, question)
+            st.write(ans)
 
+        st.markdown("### 🔗 Sources used")
+        for _,r in df.iterrows():
+            t=r.get("video_title","ECHS Video")
+            tm=int(r.get("start_time",0))
+            st.markdown(f"- **{t}** at `{tm//60:02d}:{tm%60:02d}` — {r['text'][:150]}...")
 
-def render_admin_debug(retrieved_df: pd.DataFrame):
-    """
-    Admin-only debug table with distances & raw segments.
-    """
-    if retrieved_df.empty:
-        st.info("No segments retrieved.")
-        return
+# =========================================================
+# MAIN APP
+# =========================================================
+def main():
+    st.set_page_config(page_title="ECHS BOT",page_icon="🩺",layout="wide")
+    st.title("ECHS Assistant Bot")
 
-    debug_cols = []
-    for col in ["video_title", "start_time", "text", "_distance"]:
-        if col in retrieved_df.columns:
-            debug_cols.append(col)
+    st.session_state.idx = load_faiss()
+    st.session_state.segs = load_segments()
 
-    st.markdown("### 🔧 Admin – Retrieved segments & distances")
-    st.dataframe(
-        retrieved_df[debug_cols],
-        use_container_width=True,
-        hide_index=True,
-    )
+    chat_block()
 
-
-def render_feedback_block(
-    question: str,
-    answer: str,
-    retrieved_df: pd.DataFrame,
-):
-    """
-    Feedback UI: rating slider + comment box. Logs to Sheets.
+if __name__=="__main__":
+    main()
