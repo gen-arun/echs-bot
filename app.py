@@ -448,17 +448,21 @@ def build_transcript_only_answer(hits, max_segments: int = 3):
     if not hits:
         return "No transcript found relevant to your query."
 
-    out = ["### 📄 Transcript-Only Response (No AI Used)\n"]
+    out = ["📄 Transcript-only response (no AI used):\n"]
     for h in hits[:max_segments]:
         body = h.get("body_text", "").strip()
         if not body:
             body = "_Transcript text not available for this segment._"
 
+        # Show transcript as a quote block so headings / symbols
+        # do not blow up the font size.
+        quoted = "> " + body.replace("\n", "\n> ")
+
         out.append(
             f"**{h['video_title']}**  \n"
             f"⏱ {h['start_str']} → {h['end_str']}  \n"
             f"🔗 [Watch]({h['video_url']})\n\n"
-            f"{body}\n---\n"
+            f"{quoted}\n---\n"
         )
     return "\n".join(out)
     """High-level: retrieve context and ask the LLM."""
@@ -729,8 +733,8 @@ def main():
         # Store user message
         st.session_state.messages.append({"role": "user", "content": q_text})
 
-        # If too vague, ask for clarification (only for LLM mode)
-        if is_question_unclear(q_text) and not st.session_state.segment_only:
+        # Unified clarification logic: applies to BOTH AI and transcript-only
+        if is_question_unclear(q_text):
             clarification = build_clarification_response(q_text)
             st.session_state.messages.append(
                 {"role": "assistant", "content": clarification, "sources": []}
