@@ -374,6 +374,7 @@ def retrieve_context(question: str, index, df: pd.DataFrame, embedding_model, n_
                 "segment_id": int(row["segment_id"]),
                 "source_file": row["source_file"],
                 "distance": float(dist),
+                "body_text": body_text,
             }
         )
 
@@ -449,11 +450,15 @@ def build_transcript_only_answer(hits, max_segments: int = 3):
 
     out = ["### 📄 Transcript-Only Response (No AI Used)\n"]
     for h in hits[:max_segments]:
+        body = h.get("body_text", "").strip()
+        if not body:
+            body = "_Transcript text not available for this segment._"
+
         out.append(
             f"**{h['video_title']}**  \n"
             f"⏱ {h['start_str']} → {h['end_str']}  \n"
             f"🔗 [Watch]({h['video_url']})\n\n"
-            f"{h['body_text']}\n---\n"
+            f"{body}\n---\n"
         )
     return "\n".join(out)
     """High-level: retrieve context and ask the LLM."""
@@ -516,11 +521,6 @@ def submit_segment_only_question():
         st.session_state.pending_question = q
         st.session_state.run_query = True
         st.session_state.segment_only = True
-    """Common handler when user hits Enter or clicks Get Answer."""
-    q = st.session_state.get("question_input", "").strip()
-    if q:
-        st.session_state.pending_question = q
-        st.session_state.run_query = True
 
 
 def handle_example_click(text: str):
