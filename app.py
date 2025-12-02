@@ -443,38 +443,73 @@ def get_answer(question: str, client, index, df, embedding_model, n_results: int
     return answer, hits
 
 
-def build_transcript_only_answer(hits, max_segments: int = 3):
-    """Return only transcript segments – no AI."""
+def build_transcript_only_answer(question: str, hits, max_segments: int = 3):
+    """
+    Transcript-only response (no AI).
+    Handles:
+    - no hits
+    - hits with no usable body text
+    - normal case with readable transcript text
+    Also suggests using "Answer with AI" when transcript-only is weak.
+    """
+    # Normalize question for simple keyword check
+    q = (question or "").strip().lower()
+
+    # Case 1: no hits at all
     if not hits:
-        return "No transcript found relevant to your query."
+        return (
+            "### 📄 Transcript-only response (no AI used)\n\n"
+            "**No transcript matches were found for this question.**\n"
+            "You may try **Answer with AI** for some possible leads or rephrase your question."
+        )
 
-    out = ["📄 Transcript-only response (no AI used):\n"]
-    for h in hits[:max_segments]:
-        body = h.get("body_text", "").strip()
-        if not body:
-            body = "_Transcript text not available for this segment._"
+    # Limit to top-k hits
+    limited_hits = hits[:max_segments]
 
-        # Show transcript as a quote block so headings / symbols
-        # do not blow up the font size.
-        quoted = "> " + body.replace("\n", "\n> ")
+    # Extract body_text and do a simple relevance heuristic
+    tokens = [w for w in q.split() if len(w) >= 3]
+    non_empty_segments = []
+    any_token_match = False
 
+    for h in limited_hits:
+        body = str(h.get("body_text", "") or "").strip()
+        if body:
+            non_empty_segments.append((h, body))
+            body_lower = body.lower()
+            if tokens and any(t in body_lower for t in tokens):
+                any_token_match = True
+
+    out = ["### 📄 Transcript-only response (no AI used)\n"]
+
+    # Case 2: hits exist but no good body text, or no token overlap with question
+    if not non_empty_segments or (tokens and not any_token_match):
+        out.append(
+            "I found some video segments that might be loosely related, "
+            "but I couldn't extract clear transcript text that directly answers this question.\n"
+            "You may try **Answer with AI** for some possible leads or rephrase your question.\n"
+        )
+        out.append("")  # blank line
+
+        for h in limited_hits:
+            out.append(
+                f"**{h['video_title']}**  \n"
+                f"⏱ {h['start_str']} → {h['end_str']}  \n"
+                f"🔗 [Watch this part]({h['video_url']})\n---\n"
+            )
+
+        return "\n".join(out)
+
+    # Case 3: normal transcript-only display with body text
+    for h, body in non_empty_segments:
         out.append(
             f"**{h['video_title']}**  \n"
             f"⏱ {h['start_str']} → {h['end_str']}  \n"
-            f"🔗 [Watch]({h['video_url']})\n\n"
-            f"{quoted}\n---\n"
+            f"🔗 [Watch this part]({h['video_url']})\n\n"
+            f"{body}\n---\n"
         )
+
     return "\n".join(out)
-    """High-level: retrieve context and ask the LLM."""
-    context, hits = retrieve_context(question, index, df, embedding_model, n_results)
-    prompt = build_prompt(question, context)
-    answer = call_llm(prompt, client)
-    return answer, hits
 
-
-# ============================================================
-#  FEEDBACK LOGGING
-# ============================================================
 
 
 def log_feedback(question: str, answer: str, rating: int, comment: str):
@@ -749,7 +784,7 @@ def main():
                         st.session_state.df,
                         st.session_state.embedding_model,
                     )
-                answer = build_transcript_only_answer(hits)
+                answer = build_transcript_only_answer(q_text, hits)
                 st.session_state.segment_only = False
             else:
                 # Normal LLM mode
@@ -765,6 +800,12 @@ def main():
             st.session_state.messages.append(
                 {"role": "assistant", "content": answer, "sources": hits}
             )
+
+            # PATCH6/9: Prepend 'Sources used: N' to AI answers only (not transcript-only)
+            if hits and isinstance(answer, str) and "Transcript-only response (no AI used)" not in answer:
+                src_count = len(hits)
+                st.session_state.messages[-1]['content'] = f"**📄 Sources used: {src_count}**\n\n" + st.session_state.messages[-1]['content']
+
 
     # Show conversation + feedback
     render_conversation_and_feedback()
